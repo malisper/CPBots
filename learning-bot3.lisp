@@ -26,19 +26,42 @@
 
 (defparameter time* 0)
 
+(def royalties-bottom (x)
+  "Calculates the royalites for the bottom hand."
+  (case (abs x)
+    0 15
+    1 10
+    2 6
+    3 4
+    4 2
+    t 0))
+
+(def royalties-middle (x)
+  "Calculates the royalites for the bottom hand based on the hand
+   number (the first number in the score)."
+  (case (abs x)
+    0 30
+    1 20
+    2 12
+    3 8
+    4 4
+    5 2
+    t 0))
+
+(def royalties-top (x)
+  "Calculates the royalties for the top hand."
+  (case (abs x)
+    ;; The average value for a random one of the hands.
+    5 16
+    7 45/13
+    t 0))
+
 (def learning-rate ()
   "Returns the current learning rate and increments the time."
-  (do1 (/ 100 (+ time* 100))
+  (do1 (/ 5 (+ time* 100))
     (++ time*)))
 
-;; After playing a lot.
-;; #(2.2422345 2.2422345 2.2422345 2.1897795 2.0885055 1.5193317 1.3207692
-;;   0.45194322 -0.6440801)
-
-;; Time = 214
-;; #(2.7695494 2.7695494 2.7310827 2.3198254 2.3198254 1.8559866 1.4841567
-;;   0.34828508 -1.0299426)
-(defparameter vals*
+(defparameter base-vals*
   (mapv [- 1 _]
         (vector (+ 0.00000154 0.0000139)
                 0.000240                
@@ -48,18 +71,61 @@
                 0.021128                
                 0.047539                
                 0.422569                
-                0.501177))
-  "The initial vectors of scores.")
+                0.501177)))
 
-(def fix-left (index)
+;; At t=100
+;; (#(33.936615 33.936615 33.936615 33.936615 33.936615 33.936615 7.2059345
+;;    3.5872662 1.1083677)
+;;  #(61.999954 41.99928 25.995678 17.994104 9.988225 5.887299 2.478787 1.1739542
+;;    0.07109043)
+;;  #(31.999954 20.203598 10.905194 9.331402 5.182629 1.8553166 1.0683926
+;;    -0.116306804 -0.116306804))
+
+;; At t=200
+;; (#(33.936615 33.936615 33.936615 33.936615 33.936615 33.936615 7.2059345
+;;    2.7792723 0.66068834)
+;;  #(61.999954 41.99928 25.995678 17.994104 9.862948 5.9546046 2.5683851 0.533699
+;;    0.14498888)
+;;  #(31.999954 20.203598 8.625917 8.556884 4.3986077 1.7054452 0.6515423
+;;    -0.29802796 -0.33803895)
+;;  -6.678471)
+
+;; The initial values are approximations of the expected value of that
+;; hand.
+(defparameter top-vals* (iter (for x in-vector base-vals* with-index i)
+                              (collect (+ (* 3 x)
+                                          -1
+                                          (* 2 (royalties-top i)))
+                                result-type vector))
+  "The expected value of each bottom hand.")
+
+(defparameter mid-vals* (iter (for x in-vector base-vals* with-index i)
+                              (collect (+ (* 3 x)
+                                          -1
+                                          (* 2 (royalties-middle i)))
+                                result-type vector))
+  "The expected value of each middle hand.")
+
+(defparameter bot-vals* (iter (for x in-vector base-vals* with-index i)
+                              (collect (+ (* 3 x)
+                                          -1
+                                          (* 2 (royalties-bottom i)))
+                                result-type vector))
+  "The expected value of each bottom hand.")
+
+(defparameter fault* -6 "The expected value of faulting.")
+
+(def all-vals () (list top-vals* mid-vals* bot-vals* (float fault*)))
+
+(def fix-left (arr index)
   "Fixes the values to the left of index."
   (down i index 0
-    (zap #'max vals*.i (get vals* (inc i)))))
+    (zap #'max arr.i (get arr (inc i)))))
 
-(def fix-right (index)
+(def fix-right (arr index)
   "Fixes the values to the right of index."
-  (up i (inc index) (len vals*)
-    (zap #'min vals*.i (get vals* (dec i)))))
+  (up i (inc index) (len arr)
+    (zap #'min arr.i (get arr (dec i)))))
 
 (mac hand-match (var hand &body clauses)
   "Does the hand satisify one of the hand patterns."
@@ -271,18 +337,25 @@
 
 (def raw-hands-strength (top middle bottom)
   (if (not (valid top middle bottom))
+      fault*
+      (+ (top-hand-strength top)
+         (mid-hand-strength middle)
+         (bot-hand-strength bottom))))
+
+(def top-hand-strength (hand)
+  (if (~is hand!len 3)
       0
-      (+ (raw-hand-strength top)
-         (raw-hand-strength middle)
-         (raw-hand-strength bottom))))
+      (get top-vals* (abs+car+score hand))))
 
+(def mid-hand-strength (hand)
+  (if (~is hand!len 5)
+      0
+      (get mid-vals* (abs+car+score hand))))
 
-
-(def raw-hand-strength (hand)
-  ;; Using the probability of the hand beating another random hand as
-  ;; the raw strength.
-  (let score (score hand)
-    (get vals* (abs (car score)))))
+(def bot-hand-strength (hand)
+  (if (~is hand!len 5)
+      0
+      (get bot-vals* (abs+car+score hand))))
 
 (def parse-card (string)
   (let val (nth-value 1 (scan-to-strings "^(\\d0?)(.)$" string))
@@ -403,6 +476,7 @@
         (= deck (set-difference deck (map #'parse-card (tokens (read-line))) :test #'iso))
         (read-line))
       (let card (parse-card (car (tokens (read-line))))
+        (= deck (rem card deck))
         (case (calc card top mid bot 100 deck)
           1 (do (push card top) (prn 1))
           2 (do (push card mid) (prn 2))
@@ -421,13 +495,17 @@
 (def learn (top mid bot val)
   "Learn based on achieving a score VAL with hands TOP, MID, and BOT."
   (let rate (learning-rate)
-    (flet1 adjust (index)
-        (do (++ (get vals* index) (* val rate))
-           (fix-left index)
-           (fix-right index))
-      (adjust+abs+car+score top)
-      (adjust+abs+car+score mid)
-      (adjust+abs+car+score bot))))
+    (if (~valid top mid bot)
+        (++ fault* (* (- val fault*) rate))
+        (flet1 adjust (index arr)
+            ;; The 1/3 is because we assume each hand is responsible
+            ;; for 1/3 of the total value.
+            (do (++ (get arr index) (* (- (* 1/3 val) (get arr index)) rate))
+                (fix-left  arr index)
+                (fix-right arr index))
+          (adjust (abs+car+score top) top-vals*)
+          (adjust (abs+car+score mid) mid-vals*)
+          (adjust (abs+car+score bot) bot-vals*)))))
 
 (defparameter score* 0)
 
@@ -437,9 +515,10 @@
        (usocket:socket-close ,var))))
 
 
-
 (def play-game-with-sockets ()
   (w/socket (socket "games.recurse.com" 10000)
     (with (*standard-input* (usocket:socket-stream socket)
            *standard-output* (usocket:socket-stream socket))
       (play))))
+
+

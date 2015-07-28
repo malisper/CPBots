@@ -28,7 +28,7 @@
 
 (def learning-rate ()
   "Returns the current learning rate and increments the time."
-  (do1 (/ 100 (+ time* 100))
+  (do1 (/ 1 (+ time* 100))
     (++ time*)))
 
 ;; After playing a lot.
@@ -38,7 +38,7 @@
 ;; Time = 214
 ;; #(2.7695494 2.7695494 2.7310827 2.3198254 2.3198254 1.8559866 1.4841567
 ;;   0.34828508 -1.0299426)
-(defparameter vals*
+(defparameter top-vals*
   (mapv [- 1 _]
         (vector (+ 0.00000154 0.0000139)
                 0.000240                
@@ -51,15 +51,20 @@
                 0.501177))
   "The initial vectors of scores.")
 
-(def fix-left (index)
+(defparameter mid-vals* (copy-seq top-vals*))
+(defparameter bot-vals* (copy-seq top-vals*))
+
+(def all-vals () (list top-vals* mid-vals* bot-vals*))
+
+(def fix-left (arr index)
   "Fixes the values to the left of index."
   (down i index 0
-    (zap #'max vals*.i (get vals* (inc i)))))
+    (zap #'max arr.i (get arr (inc i)))))
 
-(def fix-right (index)
+(def fix-right (arr index)
   "Fixes the values to the right of index."
-  (up i (inc index) (len vals*)
-    (zap #'min vals*.i (get vals* (dec i)))))
+  (up i (inc index) (len arr)
+    (zap #'min arr.i (get arr (dec i)))))
 
 (mac hand-match (var hand &body clauses)
   "Does the hand satisify one of the hand patterns."
@@ -272,17 +277,24 @@
 (def raw-hands-strength (top middle bottom)
   (if (not (valid top middle bottom))
       0
-      (+ (raw-hand-strength top)
-         (raw-hand-strength middle)
-         (raw-hand-strength bottom))))
+      (+ (top-hand-strength top)
+         (mid-hand-strength middle)
+         (bot-hand-strength bottom))))
 
+(def top-hand-strength (hand)
+  (if (~is hand!len 3)
+      0
+      (get top-vals* (abs+car+score hand))))
 
+(def mid-hand-strength (hand)
+  (if (~is hand!len 5)
+      0
+      (get mid-vals* (abs+car+score hand))))
 
-(def raw-hand-strength (hand)
-  ;; Using the probability of the hand beating another random hand as
-  ;; the raw strength.
-  (let score (score hand)
-    (get vals* (abs (car score)))))
+(def bot-hand-strength (hand)
+  (if (~is hand!len 5)
+      0
+      (get bot-vals* (abs+car+score hand))))
 
 (def parse-card (string)
   (let val (nth-value 1 (scan-to-strings "^(\\d0?)(.)$" string))
@@ -403,6 +415,7 @@
         (= deck (set-difference deck (map #'parse-card (tokens (read-line))) :test #'iso))
         (read-line))
       (let card (parse-card (car (tokens (read-line))))
+        (= deck (rem card deck))
         (case (calc card top mid bot 100 deck)
           1 (do (push card top) (prn 1))
           2 (do (push card mid) (prn 2))
@@ -421,13 +434,13 @@
 (def learn (top mid bot val)
   "Learn based on achieving a score VAL with hands TOP, MID, and BOT."
   (let rate (learning-rate)
-    (flet1 adjust (index)
-        (do (++ (get vals* index) (* val rate))
-           (fix-left index)
-           (fix-right index))
-      (adjust+abs+car+score top)
-      (adjust+abs+car+score mid)
-      (adjust+abs+car+score bot))))
+    (flet1 adjust (index arr)
+        (do (++ (get arr index) (* val rate))
+           (fix-left  arr index)
+           (fix-right arr index))
+      (adjust (abs+car+score top) top-vals*)
+      (adjust (abs+car+score mid) mid-vals*)
+      (adjust (abs+car+score bot) bot-vals*))))
 
 (defparameter score* 0)
 
@@ -435,7 +448,6 @@
   `(let ,var (usocket:socket-connect ,@options)
      (unwind-protect (do ,@body)
        (usocket:socket-close ,var))))
-
 
 
 (def play-game-with-sockets ()
